@@ -23,6 +23,7 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
+import android.support.annotation.Nullable;
 import android.util.Log;
 import android.widget.Toast;
 
@@ -53,8 +54,11 @@ public final class SqliteWrapper {
         }
     }
 
+    @Nullable
     public static Cursor query(Context context, ContentResolver resolver, Uri uri,
-                               String[] projection, String selection, String[] selectionArgs, String sortOrder) {
+                               String[] projection, String selection,
+                               @Nullable String[] selectionArgs, @Nullable String sortOrder)
+    {
         try {
             return resolver.query(uri, projection, selection, selectionArgs, sortOrder);
         } catch (SQLiteException e) {
