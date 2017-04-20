@@ -37,6 +37,12 @@ import java.util.Set;
 
 /**
  * An interface for finding information about conversations and/or creating new ones.
+ *
+ * FIXME: The plan is to make all uses of thread IDs in this class refer to:
+ * 1. The OS provided thread with that ID
+ * 2. All other threads which have a superset of the participants of this one
+ *
+ * Search for thread ids and work from there.
  */
 public class Conversation {
     private static final String TAG = "Mms/conv";
@@ -52,23 +58,23 @@ public class Conversation {
             Threads.HAS_ATTACHMENT
     };
 
-    public static final String[] UNREAD_PROJECTION = {
+    private static final String[] UNREAD_PROJECTION = {
             Threads._ID,
             Threads.READ
     };
 
-    public static final String UNREAD_SELECTION = "(read=0 OR seen=0)";
+    private static final String UNREAD_SELECTION = "(read=0 OR seen=0)";
     public static final String FAILED_SELECTION = "error != 0";
 
     public static final int ID = 0;
-    public static final int DATE = 1;
-    public static final int MESSAGE_COUNT = 2;
-    public static final int RECIPIENT_IDS = 3;
-    public static final int SNIPPET = 4;
-    public static final int SNIPPET_CS = 5;
-    public static final int READ = 6;
-    public static final int ERROR = 7;
-    public static final int HAS_ATTACHMENT = 8;
+    private static final int DATE = 1;
+    private static final int MESSAGE_COUNT = 2;
+    private static final int RECIPIENT_IDS = 3;
+    private static final int SNIPPET = 4;
+    private static final int SNIPPET_CS = 5;
+    private static final int READ = 6;
+    private static final int ERROR = 7;
+    private static final int HAS_ATTACHMENT = 8;
 
 
     private final Context mContext;
@@ -837,7 +843,7 @@ public class Conversation {
         }
     }
 
-    static final String[] SMS_PROJECTION = new String[]{
+    private static final String[] SMS_PROJECTION = new String[]{
             BaseColumns._ID,
             // For SMS
             Sms.THREAD_ID,
@@ -853,11 +859,11 @@ public class Conversation {
 
     // The indexes of the default columns which must be consistent
     // with above PROJECTION.
-    static final int COLUMN_ID = 0;
-    static final int COLUMN_SMS_ADDRESS = 2;
-    static final int COLUMN_SMS_BODY = 3;
-    static final int COLUMN_SMS_DATE = 4;
-    static final int COLUMN_SMS_TYPE = 6;
+    private static final int COLUMN_ID = 0;
+    private static final int COLUMN_SMS_ADDRESS = 2;
+    private static final int COLUMN_SMS_BODY = 3;
+    private static final int COLUMN_SMS_DATE = 4;
+    private static final int COLUMN_SMS_TYPE = 6;
 
     public static void dumpSmsTable(Context context) {
         LogTag.debug("**** Dump of sms table ****");
