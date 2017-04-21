@@ -30,8 +30,11 @@ import com.moez.QKSMS.transaction.NotificationManager;
 import com.moez.QKSMS.transaction.SmsHelper;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
@@ -79,18 +82,24 @@ public class Conversation {
 
     private final Context mContext;
 
-    // The thread ID of this conversation.  Can be zero in the case of a
-    // new conversation where the recipient set is changing as the user
-    // types and we have not hit the database yet to create a thread.
+    /**
+     * The thread ID of this conversation.  Can be zero in the case of a
+     * new conversation where the recipient set is changing as the user
+     * types and we have not hit the database yet to create a thread.
+     */
     private long mThreadId;
 
     private ContactList mRecipients;    // The current set of recipients.
     private long mDate;                 // The last update time.
     private int mMessageCount;          // Number of messages.
-    private String mSnippet;            // Text of the most recent message.
+
+    /**
+     * Text of the most recent message.
+     */
+    private String mSnippet;
+
     private boolean mHasUnreadMessages; // True if there are unread messages.
     private boolean mHasError;          // True if any message is in an error state.
-    // multi-operation such as delete.
 
     private static ContentValues sReadContentValues;
     private static boolean sLoadingThreads;
@@ -115,7 +124,7 @@ public class Conversation {
             Log.v(TAG, "Conversation constructor cursor, allowQuery: " + allowQuery);
         }
         mContext = context;
-        fillFromCursor(context, cursor, allowQuery);
+        fillFromCursor(context, cursor, allowQuery, true);
     }
 
     /**
@@ -154,7 +163,7 @@ public class Conversation {
         if (threadId > 0) {
             Conversation conv = Cache.get(threadId);
             if (conv != null) {
-                conv.fillFromCursor(context, cursor, false);   // update the existing conv in-place
+                conv.fillFromCursor(context, cursor, false, true);   // update the existing conv in-place
                 return conv;
             }
         }
@@ -234,6 +243,7 @@ public class Conversation {
         final Uri threadUri = getUri();
 
         new AsyncTask<Void, Void, Void>() {
+            @Override
             protected Void doInBackground(Void... none) {
                 if (DELETEDEBUG || Log.isLoggable(LogTag.APP, Log.VERBOSE)) {
                     LogTag.debug("markAsRead.doInBackground");
@@ -536,12 +546,16 @@ public class Conversation {
      * Fill the specified conversation with the values from the specified
      * cursor, possibly setting recipients to empty if value allowQuery
      * is false and the recipient IDs are not in cache.
+     *
+     * @param cleanSlate If true, overwrite current data, otherwise append
      */
-    private void fillFromCursor(Context context, Cursor c, boolean allowQuery) {
+    private void fillFromCursor(Context context, Cursor c, boolean allowQuery, boolean cleanSlate) {
         synchronized (this) {
-            mThreadId = c.getLong(ID);
-            mDate = c.getLong(DATE);
-            mMessageCount = c.getInt(MESSAGE_COUNT);
+            long threadId = c.getLong(ID);
+            long date = c.getLong(DATE);
+            int messageCount = c.getInt(MESSAGE_COUNT);
+            boolean hasUnreadMessages = (c.getInt(READ) == 0);
+            boolean hasError = (c.getInt(ERROR) != 0);
 
             // Replace the snippet with a default value if it's empty.
             String snippet = SmsHelper.cleanseMmsSubject(context,
@@ -549,11 +563,28 @@ public class Conversation {
             if (TextUtils.isEmpty(snippet)) {
                 snippet = context.getString(R.string.no_subject_view);
             }
-            mSnippet = snippet;
 
-            setHasUnreadMessages(c.getInt(READ) == 0);
-            mHasError = (c.getInt(ERROR) != 0);
+            if (cleanSlate) {
+                mThreadId = threadId;
+                mDate = date;
+                mMessageCount = messageCount;
+                mSnippet = snippet;
+                mHasUnreadMessages = hasUnreadMessages;
+                mHasError = hasError;
+            } else {
+                // Don't touch the thread ID
+
+                mSnippet = mergeSnippets(context, date, snippet, mDate, mSnippet);
+
+                // Take the newest date
+                mDate = Math.max(mDate, date);
+
+                mMessageCount += c.getInt(MESSAGE_COUNT);
+                mHasUnreadMessages |= hasUnreadMessages;
+                mHasError |= hasError;
+            }
         }
+
         // Fill in as much of the conversation as we can before doing the slow stuff of looking
         // up the contacts associated with this conversation.
         String recipientIds = c.getString(RECIPIENT_IDS);
@@ -565,6 +596,29 @@ public class Conversation {
         if (Log.isLoggable(TAG, Log.DEBUG)) {
             Log.d(TAG, "fillFromCursor: conv=" + this + ", recipientIds=" + recipientIds);
         }
+    }
+
+    private String mergeSnippets(Context context, long date1, String snippet1, long date2, String snippet2) {
+        List<String> candidates = new LinkedList<>();
+        String noneSnippet = context.getString(R.string.no_subject_view);
+        if (!noneSnippet.equals(snippet1)) {
+            candidates.add(snippet1);
+        }
+        if (!noneSnippet.equals(snippet2)) {
+            candidates.add(snippet2);
+        }
+
+        if (date1 > date2) {
+            // This sorts the list in date order
+            Collections.reverse(candidates);
+        }
+
+        if (candidates.isEmpty()) {
+            return noneSnippet;
+        }
+
+        // The last candidate is the newest
+        return candidates.get(candidates.size() - 1);
     }
 
     /**
@@ -681,7 +735,7 @@ public class Conversation {
             synchronized (sInstance) {
                 LogTag.debug("Conversation dumpCache: ");
                 for (Conversation c : sInstance.mCache) {
-                    LogTag.debug("   conv: " + c.toString() + " hash: " + c.hashCode());
+                    LogTag.debug("   conv: " + c + " hash: " + c.hashCode());
                 }
             }
         }
@@ -764,7 +818,7 @@ public class Conversation {
                     } else {
                         // Or update in place so people with references
                         // to conversations get updated too.
-                        conv.fillFromCursor(context, c, true);
+                        conv.fillFromCursor(context, c, true, true);
                     }
                 }
             }
@@ -784,25 +838,42 @@ public class Conversation {
     }
 
     private boolean loadFromThreadId(long threadId, boolean allowQuery) {
-        try (Cursor c = mContext.getContentResolver().query(sAllThreadsUri, ALL_THREADS_PROJECTION,
-                "_id=" + Long.toString(threadId), null, null)) {
-            if (c == null) {
-                LogTag.error("loadFromThreadId: Can't find thread ID (null cursor) " + threadId);
-                return false;
-            }
+        // FIXME: Figure out which other thread IDs have a superset of this thread's recipients
+        List<Long> allThreadIds = new LinkedList<>();
+        allThreadIds.add(threadId);
 
-            if (c.moveToFirst()) {
-                fillFromCursor(mContext, c, allowQuery);
+        if (allThreadIds.get(0) != threadId) {
+            throw new AssertionError("Base thread " + threadId + " must be first: " + allThreadIds);
+        }
 
-                if (threadId != mThreadId) {
-                    LogTag.error("loadFromThreadId: fillFromCursor returned differnt thread_id!" +
-                            " threadId=" + threadId + ", mThreadId=" + mThreadId);
+        // For all thread IDs, both ours and the others, fill up this conversation
+        for (long currentThreadId: allThreadIds) {
+            try (Cursor cursor = mContext.getContentResolver().query(sAllThreadsUri,
+                    ALL_THREADS_PROJECTION,
+                    "_id=" + currentThreadId, null, null))
+            {
+                if (cursor == null) {
+                    LogTag.error(
+                            "loadFromThreadId: Can't find thread ID (null cursor) " + threadId);
+                    return false;
                 }
-            } else {
-                LogTag.error("loadFromThreadId: Can't find thread ID " + threadId);
-                return false;
+
+                if (!cursor.moveToFirst()) {
+                    LogTag.error("loadFromThreadId: Can't find thread ID " + threadId);
+                    return false;
+                }
+
+                // Start from scratch with the base thread
+                boolean pleaseClear = (currentThreadId == threadId);
+                fillFromCursor(mContext, cursor, allowQuery, pleaseClear);
             }
         }
+
+        if (threadId != mThreadId) {
+            LogTag.error("loadFromThreadId: fillFromCursor returned differnt thread_id!" +
+                    " threadId=" + threadId + ", mThreadId=" + mThreadId);
+        }
+
         return true;
     }
 
