@@ -29,23 +29,20 @@ import com.moez.QKSMS.receiver.UnreadBadgeService;
 import com.moez.QKSMS.transaction.NotificationManager;
 import com.moez.QKSMS.transaction.SmsHelper;
 
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
  * An interface for finding information about conversations and/or creating new ones.
- *
- * FIXME: The plan is to make all uses of thread IDs in this class refer to:
- * 1. The OS provided thread with that ID
- * 2. All other threads which have a superset of the participants of this one
- *
- * Search for thread ids and work from there.
  */
 public class Conversation {
     private static final String TAG = "Mms/conv";
@@ -838,9 +835,10 @@ public class Conversation {
     }
 
     private boolean loadFromThreadId(long threadId, boolean allowQuery) {
-        // FIXME: Figure out which other thread IDs have a superset of this thread's recipients
+        // Figure out which other thread IDs have a superset of this thread's recipients
         List<Long> allThreadIds = new LinkedList<>();
         allThreadIds.add(threadId);
+        allThreadIds.addAll(listSupersetThreads(mContext, threadId));
 
         if (allThreadIds.get(0) != threadId) {
             throw new AssertionError("Base thread " + threadId + " must be first: " + allThreadIds);
@@ -875,6 +873,44 @@ public class Conversation {
         }
 
         return true;
+    }
+
+    private Collection<Long> listSupersetThreads(Context context, long baseThreadId) {
+        // List recipient IDs for all threads...
+        Map<Long, Collection<String>> threadToRecipients = new HashMap<>();
+        try (Cursor c = context.getContentResolver().query(sAllThreadsUri,
+                ALL_THREADS_PROJECTION, null, null, "date ASC")) {
+            if (c == null) {
+                LogTag.debug("<no cursor, no threads>");
+                return Collections.emptyList();
+            }
+
+            c.moveToPosition(-1);
+            while (c.moveToNext()) {
+                // List the thread recipients
+                long threadId = c.getLong(ID);
+                Collection<String> recipientIds = Arrays.asList(c.getString(RECIPIENT_IDS).split(" "));
+                threadToRecipients.put(threadId, recipientIds);
+            }
+        }
+
+        Collection<String> baseThreadRecipients = threadToRecipients.get(baseThreadId);
+        List<Long> superSet = new LinkedList<>();
+
+        for (Map.Entry<Long, Collection<String>> threadWithRecipients: threadToRecipients.entrySet()) {
+            long threadId = threadWithRecipients.getKey();
+            if (threadId == baseThreadId) {
+                // The base thread is not in its own superset
+                continue;
+            }
+
+            Collection<String> recipients = threadWithRecipients.getValue();
+            if (recipients.containsAll(baseThreadRecipients)) {
+                superSet.add(threadId);
+            }
+        }
+
+        return superSet;
     }
 
     public static String getRecipients(Uri uri) {
